@@ -1,80 +1,166 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: "Quick start"
+description: "Detect speech segments in an audio file in under 5 minutes using Silero VAD."
 ---
 
-## Get started in three steps
+## Prerequisites
 
-Get your documentation site running locally and make your first customization.
+- Python 3.8 or later
+- An audio file to test with (WAV, MP3, FLAC, or any format your audio backend supports)
 
-### Step 1: Set up your local environment
+## Steps
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+<Steps>
+  <Step title="Install silero-vad">
+    Install the package from PyPI. This pulls in PyTorch and torchaudio automatically.
 
-### Step 2: Deploy your changes
+    ```bash
+    pip install silero-vad
+    ```
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    <Tip>
+      To run inference with the ONNX backend instead of PyTorch JIT, install the optional ONNX extras. See the [installation page](/installation) for all available options.
+    </Tip>
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Load the model">
+    Import `load_silero_vad` and call it to load the bundled JIT model. The model is stored inside the package — no download required.
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```python
+    from silero_vad import load_silero_vad
 
-### Step 3: Go live
+    model = load_silero_vad()
+    ```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    To load the ONNX model instead, pass `onnx=True`:
+
+    ```python
+    model = load_silero_vad(onnx=True)
+    ```
+  </Step>
+
+  <Step title="Read an audio file">
+    Use `read_audio` to load an audio file and resample it to 16 kHz. The function returns a 1-D `torch.Tensor` of float32 samples.
+
+    ```python
+    from silero_vad import read_audio
+
+    wav = read_audio('path/to/audio.wav')
+    ```
+
+    `read_audio` accepts an optional `sampling_rate` argument. The default is `16000`. Pass `sampling_rate=8000` if you want 8 kHz inference instead.
+  </Step>
+
+  <Step title="Get speech timestamps">
+    Pass the waveform and model to `get_speech_timestamps`. Set `return_seconds=True` to receive timestamps in seconds rather than sample indices.
+
+    ```python
+    from silero_vad import get_speech_timestamps
+
+    speech_timestamps = get_speech_timestamps(wav, model, return_seconds=True)
+
+    for segment in speech_timestamps:
+        print(f"Speech from {segment['start']:.1f}s to {segment['end']:.1f}s")
+    ```
+
+    `get_speech_timestamps` returns a list of dicts. Each dict has two keys:
+
+    | Key | Type | Description |
+    | --- | --- | --- |
+    | `start` | `float` or `int` | Start of the speech segment. Seconds when `return_seconds=True`, otherwise sample index. |
+    | `end` | `float` or `int` | End of the speech segment. Seconds when `return_seconds=True`, otherwise sample index. |
+  </Step>
+</Steps>
+
+## Complete example
+
+<CodeGroup>
+
+```python pip install
+from silero_vad import load_silero_vad, read_audio, get_speech_timestamps
+
+# Load model (PyTorch JIT, bundled — no download needed)
+model = load_silero_vad()
+
+# Read audio and resample to 16 kHz
+wav = read_audio('path/to/audio.wav')
+
+# Detect speech segments
+speech_timestamps = get_speech_timestamps(wav, model, return_seconds=True)
+
+for segment in speech_timestamps:
+    print(f"Speech from {segment['start']:.1f}s to {segment['end']:.1f}s")
+```
+
+```python torch.hub
+import torch
+torch.set_num_threads(1)
+
+# Load model and utilities directly from the GitHub repo (no pip install needed)
+model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad')
+(get_speech_timestamps, _, read_audio, _, _) = utils
+
+# Read audio and resample to 16 kHz
+wav = read_audio('path/to/audio.wav')
+
+# Detect speech segments
+speech_timestamps = get_speech_timestamps(wav, model, return_seconds=True)
+
+for segment in speech_timestamps:
+    print(f"Speech from {segment['start']:.1f}s to {segment['end']:.1f}s")
+```
+
+</CodeGroup>
+
+## Working with the returned timestamps
+
+Once you have `speech_timestamps`, you can extract or discard speech segments from the original waveform using the `collect_chunks` and `drop_chunks` utilities.
+
+```python
+from silero_vad import (
+    load_silero_vad,
+    read_audio,
+    get_speech_timestamps,
+    collect_chunks,
+    drop_chunks,
+)
+
+model = load_silero_vad()
+wav = read_audio('path/to/audio.wav')
+
+# Get timestamps in samples (default — no return_seconds)
+speech_timestamps = get_speech_timestamps(wav, model)
+
+# Concatenate only the speech portions
+speech_only = collect_chunks(speech_timestamps, wav)
+
+# Concatenate only the non-speech portions
+silence_only = drop_chunks(speech_timestamps, wav)
+```
+
+<Tip>
+  When using `collect_chunks` or `drop_chunks` with second-based timestamps (i.e., `return_seconds=True`), pass `seconds=True` and `sampling_rate=16000` to those functions as well.
+</Tip>
+
+## Key parameters
+
+`get_speech_timestamps` exposes several tunable parameters. The most useful ones for getting started:
+
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `threshold` | `0.5` | Speech probability cutoff. Lower values detect more speech; higher values are stricter. |
+| `sampling_rate` | `16000` | Must match the sampling rate of the waveform. Use `8000` or `16000`. |
+| `min_speech_duration_ms` | `250` | Speech segments shorter than this (ms) are discarded. |
+| `min_silence_duration_ms` | `100` | Minimum silence (ms) between separate speech segments. |
+| `return_seconds` | `False` | Return timestamps in seconds instead of sample indices. |
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Installation" icon="download" href="/installation">
+    Explore all installation options including ONNX extras and torch.hub.
+  </Card>
+  <Card title="API reference" icon="code" href="/api/get-speech-timestamps">
+    Full parameter reference for `get_speech_timestamps` and all other utilities.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

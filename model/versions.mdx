@@ -1,0 +1,153 @@
+---
+title: "Model Versions"
+description: "Available model files, runtime variants, ONNX opset versions, and Python/dependency compatibility for Silero VAD."
+---
+
+## Current Package Version
+
+The latest release of the `silero-vad` Python package is **6.2.1**. All model files described on this page are bundled inside the package and require no separate download.
+
+```bash
+pip install silero-vad        # latest
+pip install silero-vad==6.2.1 # pin to specific version
+```
+
+---
+
+## Model Files
+
+### PyTorch JIT
+
+| File | Description |
+|------|-------------|
+| `silero_vad.jit` | Default runtime. Loaded via `torch.jit.load`. ~2 MB. |
+
+```python
+from silero_vad import load_silero_vad
+
+model = load_silero_vad()           # loads silero_vad.jit
+```
+
+### ONNX
+
+| File | ONNX Opset | Sample rates | Notes |
+|------|-----------|--------------|-------|
+| `silero_vad.onnx` | 16 | 8 000 Hz, 16 000 Hz | Default ONNX model |
+| `silero_vad_16k_op15.onnx` | 15 | 16 000 Hz only | Legacy opset for older runtimes |
+
+```python
+from silero_vad import load_silero_vad
+
+model_op16 = load_silero_vad(onnx=True)                    # silero_vad.onnx (opset 16)
+model_op15 = load_silero_vad(onnx=True, opset_version=15)  # silero_vad_16k_op15.onnx
+```
+
+Passing any opset version other than `15` or `16` raises an exception:
+
+```
+Exception: Available ONNX opset_version: [15, 16]
+```
+
+### TinyGrad
+
+| File | Framework | Description |
+|------|-----------|-------------|
+| `silero_vad_16k.safetensors` | TinyGrad | Weights for the `TinySileroVAD` class |
+
+<Note>
+  `TinySileroVAD` is **not** exported from the `silero_vad` package's public API (`__init__.py`).
+  It must be imported directly from `silero_vad.tinygrad_model` and requires `tinygrad` to be
+  installed separately.
+</Note>
+
+```python
+from tinygrad.nn.state import safe_load, load_state_dict
+from silero_vad.tinygrad_model import TinySileroVAD
+
+model = TinySileroVAD()
+state_dict = safe_load('silero_vad_16k.safetensors')
+load_state_dict(model, state_dict)
+```
+
+---
+
+## Python Compatibility
+
+| Python version | Supported |
+|---------------|-----------|
+| 3.8 | Yes |
+| 3.9 | Yes |
+| 3.10 | Yes |
+| 3.11 | Yes |
+| 3.12 | Yes |
+| 3.13 | Yes |
+| 3.14 | Yes |
+| 3.15 | Yes |
+
+---
+
+## Dependency Requirements
+
+| Dependency | Requirement | Notes |
+|------------|-------------|-------|
+| `torch` | >= 1.12.0 | Required for JIT and tensor operations |
+| `torchaudio` | >= 0.12.0 | Required for audio I/O (`read_audio`, `save_audio`) |
+| `onnxruntime` | >= 1.16.1 | Required for ONNX inference (CPU) |
+| `onnxruntime-gpu` | >= 1.16.1 | Required for ONNX inference (GPU) |
+| `packaging` | any | Used for version comparisons internally |
+
+Install optional ONNX extras:
+
+```bash
+pip install silero-vad[onnx-cpu]   # onnxruntime for CPU
+pip install silero-vad[onnx-gpu]   # onnxruntime-gpu for CUDA
+```
+
+### torchaudio Audio Backend
+
+`torchaudio` requires a compatible audio backend for I/O. Three options are supported:
+
+<Tabs>
+  <Tab title="FFmpeg (recommended)">
+    ```bash
+    conda install -c conda-forge 'ffmpeg<7'
+    ```
+  </Tab>
+  <Tab title="sox_io">
+    ```bash
+    apt-get install sox
+    ```
+    Tested on libsox 14.4.2.
+  </Tab>
+  <Tab title="soundfile">
+    ```bash
+    pip install soundfile
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+**torchaudio >= 2.9 requires torchcodec for audio I/O.** Starting with torchaudio 2.9, the internal audio backend changed. If `torchaudio.load` fails, Silero VAD will automatically attempt to fall back to `torchcodec`. Install it with:
+
+```bash
+pip install torchcodec
+```
+
+Alternatively, pin torchaudio below 2.9:
+
+```bash
+pip install "torchaudio<2.9"
+```
+</Note>
+
+---
+
+## ONNX-only Deployments
+
+If you run inference using only the ONNX Runtime (e.g. in C++, Rust, Go, or Java), neither `torch` nor `torchaudio` are required. You will need to:
+
+1. Implement your own audio I/O.
+2. Manage the LSTM hidden state tensor `(2, batch_size, 128)` — representing stacked `(h, c)` — manually between calls.
+3. Prepend the context window (64 samples at 16 kHz, 32 samples at 8 kHz) to each chunk.
+
+Community examples for C++, Rust, Go, Java, and C# are available in the [examples directory](https://github.com/snakers4/silero-vad/tree/master/examples) of the repository.

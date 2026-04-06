@@ -1,0 +1,152 @@
+---
+title: "ONNX Runtime Usage"
+description: "Run Silero VAD with ONNX Runtime for up to 4–5x faster inference on any supported platform."
+---
+
+## Why ONNX?
+
+The ONNX backend can be **4–5x faster** than the JIT model under certain conditions, and runs wherever [ONNX Runtime](https://onnxruntime.ai/getting-started) is available — including non-x86 architectures, mobile, and edge devices.
+
+Key advantages:
+
+- Faster single-CPU inference in many scenarios
+- Runs on platforms without a full PyTorch install
+- Consistent cross-platform behaviour via the ONNX standard
+- GPU acceleration available via `onnxruntime-gpu`
+
+<Note>
+If you are using a non-Python runtime (C++, Rust, Go, Java, etc.) you will need to implement audio I/O yourself and adapt the post-processing for your use case.
+</Note>
+
+---
+
+## Installation
+
+Install the package with the appropriate ONNX extra:
+
+<CodeGroup>
+```bash CPU
+pip install silero-vad[onnx-cpu]
+```
+
+```bash GPU (CUDA)
+pip install silero-vad[onnx-gpu]
+```
+</CodeGroup>
+
+The `[onnx-cpu]` extra installs `onnxruntime`; `[onnx-gpu]` installs `onnxruntime-gpu`.
+
+---
+
+## Loading the ONNX Model
+
+Pass `onnx=True` to `load_silero_vad`. The returned object is an `OnnxWrapper` that exposes the same API as the JIT model.
+
+```python
+from silero_vad import load_silero_vad
+
+# Load ONNX model (opset 16 by default)
+model = load_silero_vad(onnx=True)
+
+# Load opset 15 variant
+model_op15 = load_silero_vad(onnx=True, opset_version=15)
+```
+
+<Warning>
+Only opset versions **15** and **16** are available. Passing any other value raises an exception: `Available ONNX opset_version: [15, 16]`. Opset 16 is recommended and is the default.
+</Warning>
+
+---
+
+## OnnxWrapper API
+
+`OnnxWrapper` is a drop-in replacement for the JIT model. The same utility functions (`get_speech_timestamps`, `collect_chunks`, `drop_chunks`, `VADIterator`) work unchanged.
+
+### Full-file inference
+
+```python
+from silero_vad import load_silero_vad, read_audio, get_speech_timestamps
+
+model = load_silero_vad(onnx=True)
+wav = read_audio('path/to/audio.wav')
+
+speech_timestamps = get_speech_timestamps(
+    wav,
+    model,
+    threshold=0.5,
+    sampling_rate=16000,
+    return_seconds=True,
+)
+print(speech_timestamps)
+```
+
+### Chunk-by-chunk inference
+
+Like the JIT model, `OnnxWrapper` is callable with a single audio chunk:
+
+```python
+import torch
+from silero_vad import load_silero_vad
+
+model = load_silero_vad(onnx=True)
+model.reset_states()
+
+# 512 samples at 16000 Hz, or 256 samples at 8000 Hz
+chunk = torch.zeros(1, 512)  # shape: (batch, samples)
+
+prob = model(chunk, sr=16000)
+print(prob)  # tensor([[0.0023]])
+```
+
+### Whole-file via `audio_forward`
+
+```python
+import torch
+from silero_vad import load_silero_vad, read_audio
+
+model = load_silero_vad(onnx=True)
+wav = read_audio('path/to/audio.wav').unsqueeze(0)  # (1, num_samples)
+
+probs = model.audio_forward(wav, sr=16000)
+print(probs.shape)
+```
+
+---
+
+## Resetting States
+
+Always call `model.reset_states()` between independent audio streams. The ONNX wrapper maintains LSTM hidden states `(h, c)` across calls; not resetting them causes incorrect probabilities when switching to a new file.
+
+```python
+# Process first file
+model.reset_states()
+probs_a = model.audio_forward(wav_a.unsqueeze(0), sr=16000)
+
+# Process second file — must reset first
+model.reset_states()
+probs_b = model.audio_forward(wav_b.unsqueeze(0), sr=16000)
+```
+
+---
+
+## Supported Sample Rates
+
+`OnnxWrapper` validates input against its supported sample rates:
+
+| Model file | Supported rates |
+|-----------|----------------|
+| `silero_vad.onnx` (opset 16) | 8000 Hz, 16000 Hz |
+| `silero_vad_16k_op15.onnx` | 16000 Hz only |
+
+Multiples of 16000 (e.g. 32000, 48000) are automatically downsampled to 16000 before inference.
+
+---
+
+## Non-Python Runtimes
+
+When using ONNX Runtime outside of Python, note that:
+
+- **I/O is your responsibility.** The Python helpers (`read_audio`, `save_audio`) are not available.
+- **Post-processing must be reimplemented.** `get_speech_timestamps`, `VADIterator`, and related utilities depend on Python/PyTorch.
+- The model input is `{'input': <float32 audio>, 'state': <float32 GRU state>, 'sr': <int64>}`.
+- Community examples for C++, Rust, Go, Java, C#, and Haskell are available in the `examples/` directory of the repository.

@@ -1,97 +1,68 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Silero VAD"
+description: "Pre-trained, enterprise-grade Voice Activity Detector for PyTorch and ONNX runtimes with sub-millisecond CPU inference."
 ---
 
-## Setting up
+Silero VAD is a lightweight, accurate voice activity detector that identifies speech segments in audio. It runs in under 1ms per audio chunk on a single CPU thread, supports PyTorch JIT and ONNX runtimes, and works across 6,000+ languages.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Detect speech in an audio file in under 5 minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Installation" icon="download" href="/installation">
+    Install via pip, conda, or torch.hub.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="API Reference" icon="code" href="/api/load-silero-vad">
+    Full Python API documentation with all parameters.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Streaming Guide" icon="wave-square" href="/guides/streaming">
+    Real-time VAD using VADIterator for live audio.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Why Silero VAD?
 
-Everything you need to create world-class documentation.
+<CardGroup cols={2}>
+  <Card title="Fast" icon="bolt">
+    One 30ms audio chunk takes less than **1ms** to process on a single CPU thread. GPU and batching further improve throughput.
+  </Card>
+  <Card title="Accurate" icon="bullseye">
+    Trained on massive, diverse corpora spanning **6,000+ languages** with various noise levels and domains.
+  </Card>
+  <Card title="Lightweight" icon="feather">
+    The JIT model weighs around **2 MB**. Easy to embed in edge, IoT, and mobile applications.
+  </Card>
+  <Card title="Flexible" icon="sliders">
+    Supports **8 kHz and 16 kHz** sampling rates. Runs on PyTorch JIT, ONNX, and TinyGrad runtimes.
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Get started in seconds
 
-## Need inspiration?
+```python quickstart.py
+from silero_vad import load_silero_vad, read_audio, get_speech_timestamps
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+model = load_silero_vad()
+wav = read_audio('audio.wav')
+timestamps = get_speech_timestamps(wav, model, return_seconds=True)
+
+for segment in timestamps:
+    print(f"Speech: {segment['start']:.1f}s → {segment['end']:.1f}s")
+```
+
+## Typical use cases
+
+<CardGroup cols={2}>
+  <Card title="IoT & Edge" icon="microchip" href="/guides/onnx-usage">
+    Deploy on resource-constrained devices using the ONNX runtime.
+  </Card>
+  <Card title="Telephony & Call Centers" icon="phone" href="/guides/pytorch-usage">
+    Filter silence from call recordings and detect when agents are speaking.
+  </Card>
+  <Card title="Real-time Streaming" icon="signal" href="/guides/streaming">
+    Process microphone input chunk-by-chunk with VADIterator.
+  </Card>
+  <Card title="Multi-language Integrations" icon="globe" href="/guides/language-integrations">
+    Use Silero VAD from C++, Rust, Go, Java, C#, and more.
+  </Card>
+</CardGroup>

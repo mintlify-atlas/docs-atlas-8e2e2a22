@@ -1,0 +1,147 @@
+---
+title: "Performance"
+description: "Latency, throughput, memory footprint, and tips for maximising Silero VAD performance."
+---
+
+Silero VAD is designed for real-time and near-real-time workloads. The model is small, fast, and can be further accelerated through ONNX, batching, or GPU execution.
+
+## Key Metrics
+
+<CardGroup cols={3}>
+  <Card title="< 1 ms per chunk" icon="bolt">
+    One 30+ ms audio chunk processed in under 1 ms on a single CPU thread.
+  </Card>
+  <Card title="~2 MB model size" icon="database">
+    The JIT model fits comfortably in L2/L3 cache on modern CPUs.
+  </Card>
+  <Card title="Up to 4–5× ONNX speedup" icon="gauge-high">
+    ONNX Runtime can outperform PyTorch JIT by 4–5× on CPU under certain conditions.
+  </Card>
+</CardGroup>
+
+---
+
+## Latency
+
+The model processes a single 512-sample chunk (32 ms of audio at 16 kHz) in **less than 1 ms** on a single CPU thread. This leaves ample headroom for real-time pipelines even when running alongside other processing stages.
+
+| Chunk duration | Window size (16 kHz) | Typical CPU latency |
+|---------------|----------------------|---------------------|
+| 32 ms | 512 samples | < 1 ms |
+| 32 ms | 256 samples (8 kHz) | < 1 ms |
+
+<Tip>
+Set `torch.set_num_threads(1)` before loading the model for optimal single-threaded performance. PyTorch's default multi-thread overhead can actually increase latency on small inputs like VAD chunks.
+
+```python
+import torch
+torch.set_num_threads(1)
+
+from silero_vad import load_silero_vad
+model = load_silero_vad()
+```
+</Tip>
+
+---
+
+## ONNX vs JIT
+
+| Runtime | Relative speed | Best for |
+|---------|---------------|----------|
+| PyTorch JIT | 1× (baseline) | PyTorch-native pipelines |
+| ONNX (CPU) | Up to 4–5× faster | CPU-bound production deployments |
+| ONNX (GPU) | Significant additional gain | High-volume batch workloads |
+
+<Tip>
+Prefer ONNX for CPU-bound scenarios. Install the runtime with:
+
+```bash
+pip install silero-vad[onnx-cpu]   # CPU
+pip install silero-vad[onnx-gpu]   # GPU (requires CUDA)
+```
+</Tip>
+
+---
+
+## Batch Processing
+
+For whole-file inference, use `audio_forward()` instead of feeding chunks manually. It resets state, pads the audio to a multiple of `window_size_samples`, and returns a stacked probability tensor.
+
+```python
+import torch
+from silero_vad import load_silero_vad, read_audio
+
+model = load_silero_vad(onnx=True)
+wav = read_audio('audio.wav', sampling_rate=16000)
+
+# Returns shape (1, num_chunks) — one probability per 32 ms window
+probs = model.audio_forward(wav.unsqueeze(0), sr=16000)
+print(probs.shape)
+```
+
+The ONNX wrapper also accepts a `batch_size` parameter in `reset_states()`, enabling parallel processing of multiple audio streams:
+
+```python
+batch_size = 4
+model.reset_states(batch_size=batch_size)
+
+# Feed (batch_size, 512) tensors for concurrent stream processing
+batch_chunk = torch.stack([stream[i : i + 512] for stream in streams])
+probs = model(batch_chunk, sr=16000)
+```
+
+---
+
+## GPU Acceleration
+
+The JIT model runs on any `torch.device`. Use `init_jit_model` from `silero_vad.utils_vad`, providing the path to the bundled `.jit` file:
+
+```python
+import torch
+from importlib import resources as impresources
+from silero_vad.utils_vad import init_jit_model
+
+# Resolve the bundled model path
+with impresources.path('silero_vad.data', 'silero_vad.jit') as f:
+    model_path = str(f)
+
+model = init_jit_model(model_path, device=torch.device('cuda'))
+```
+
+For ONNX on GPU, install `onnxruntime-gpu` and remove `force_onnx_cpu`:
+
+```python
+import onnxruntime
+session = onnxruntime.InferenceSession(
+    'silero_vad.onnx',
+    providers=['CUDAExecutionProvider', 'CPUExecutionProvider']
+)
+```
+
+---
+
+## Throughput Tips
+
+<Tip>
+**Pre-resample to 16 kHz.** The 16 kHz path uses 512-sample windows and the full STFT resolution. If your pipeline can resample upstream (e.g. with FFmpeg), do so before passing audio to the model.
+</Tip>
+
+<Tip>
+**Use ONNX for CPU-bound scenarios.** The ONNX session is configured with `inter_op_num_threads=1` and `intra_op_num_threads=1` by default, keeping CPU affinity tight and avoiding context-switch overhead.
+</Tip>
+
+<Tip>
+**Avoid unnecessary state resets.** `reset_states()` allocates new zero tensors. In a streaming pipeline, call it only when switching to a new audio source — not between chunks of the same stream.
+</Tip>
+
+---
+
+## System Requirements
+
+| Requirement | Minimum |
+|-------------|---------|
+| RAM | 1 GB+ |
+| CPU | x86-64 with AVX / AVX2 / AVX-512 / AMX |
+| Python | 3.8+ |
+| PyTorch | >= 1.12.0 |
+| ONNX Runtime (optional) | >= 1.16.1 |

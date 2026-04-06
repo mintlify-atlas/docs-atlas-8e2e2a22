@@ -1,0 +1,167 @@
+---
+title: "PyTorch Usage"
+description: "Load and run Silero VAD with the PyTorch JIT backend for full-file and chunk-by-chunk inference."
+---
+
+## Loading the Model
+
+Use `load_silero_vad()` to load the JIT model. By default it loads the TorchScript (`.jit`) file bundled with the package.
+
+<CodeGroup>
+```python pip
+from silero_vad import load_silero_vad
+
+model = load_silero_vad(onnx=False)
+```
+
+```python torch.hub
+import torch
+torch.set_num_threads(1)
+
+model, utils = torch.hub.load(
+    repo_or_dir='snakers4/silero-vad',
+    model='silero_vad'
+)
+(get_speech_timestamps, _, read_audio, _, _) = utils
+```
+</CodeGroup>
+
+<Note>
+Set `torch.set_num_threads(1)` when using `torch.hub` to avoid CPU contention on single-threaded workloads. The pip package does this automatically via `model.py`.
+</Note>
+
+---
+
+## Processing a Full Audio File
+
+`get_speech_timestamps` is the primary high-level API. It runs the model over an entire waveform and returns a list of speech segment boundaries.
+
+```python
+from silero_vad import load_silero_vad, read_audio, get_speech_timestamps
+
+model = load_silero_vad()
+wav = read_audio('path/to/audio.wav')  # resamples to 16000 Hz by default
+
+speech_timestamps = get_speech_timestamps(
+    wav,
+    model,
+    threshold=0.5,               # speech probability threshold
+    sampling_rate=16000,
+    min_speech_duration_ms=250,  # drop segments shorter than this
+    min_silence_duration_ms=100, # minimum silence gap between segments
+    speech_pad_ms=30,            # pad each segment on both sides
+    return_seconds=True,         # return times in seconds instead of samples
+)
+
+# Example output:
+# [{'start': 0.4, 'end': 3.2}, {'start': 5.1, 'end': 8.7}]
+print(speech_timestamps)
+```
+
+### Key Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `threshold` | `0.5` | Probability above which audio is classified as speech |
+| `sampling_rate` | `16000` | Must be `8000`, `16000`, or a multiple of `16000` |
+| `min_speech_duration_ms` | `250` | Discard speech segments shorter than this |
+| `max_speech_duration_s` | `inf` | Split segments longer than this |
+| `min_silence_duration_ms` | `100` | Minimum silence gap before ending a segment |
+| `speech_pad_ms` | `30` | Padding added to each side of a detected segment |
+| `return_seconds` | `False` | Return timestamps in seconds (`True`) or samples (`False`) |
+
+<Note>
+The default sampling rate is **16000 Hz**. The model also supports **8000 Hz**. Multiples of 16000 (e.g., 32000, 48000) are automatically downsampled to 16000 Hz with a warning.
+</Note>
+
+---
+
+## Raw Model Inference
+
+The JIT model is callable directly. It accepts a single audio chunk and the sampling rate, and returns a speech probability as a scalar `float`.
+
+```python
+import torch
+from silero_vad import load_silero_vad
+
+model = load_silero_vad()
+model.reset_states()
+
+# Chunk size: 512 samples at 16000 Hz, 256 samples at 8000 Hz
+chunk = torch.zeros(512)  # replace with real audio samples
+
+speech_prob = model(chunk, 16000).item()
+print(f"Speech probability: {speech_prob:.4f}")
+```
+
+<Note>
+Always call `model.reset_states()` before processing a new audio stream to clear the internal RNN hidden states.
+</Note>
+
+---
+
+## Whole-File Inference with `audio_forward`
+
+`audio_forward` is a convenience method on the model that processes an entire waveform at once, internally iterating in fixed-size windows and returning per-window probabilities.
+
+```python
+import torch
+from silero_vad import load_silero_vad, read_audio
+
+model = load_silero_vad()
+wav = read_audio('path/to/audio.wav')
+
+# Add batch dimension: shape (1, num_samples)
+wav_batched = wav.unsqueeze(0)
+
+# Returns shape (1, num_windows) — one probability per 512-sample window
+probs = model.audio_forward(wav_batched, sr=16000)
+print(probs.shape)   # e.g. torch.Size([1, 312])
+print(probs[0, :5])  # first five window probabilities
+```
+
+---
+
+## Collecting Speech Chunks
+
+`collect_chunks` extracts and concatenates the speech segments from the full waveform using the timestamps returned by `get_speech_timestamps`.
+
+```python
+from silero_vad import load_silero_vad, read_audio, get_speech_timestamps, collect_chunks
+
+model = load_silero_vad()
+wav = read_audio('path/to/audio.wav')
+
+speech_timestamps = get_speech_timestamps(wav, model)
+
+# Concatenate all detected speech into a single tensor
+speech_only = collect_chunks(speech_timestamps, wav)
+print(f"Original length : {len(wav)} samples")
+print(f"Speech only     : {len(speech_only)} samples")
+```
+
+To work with second-based timestamps, pass `seconds=True` together with the sampling rate:
+
+```python
+speech_timestamps_sec = get_speech_timestamps(wav, model, return_seconds=True)
+speech_only = collect_chunks(speech_timestamps_sec, wav, seconds=True, sampling_rate=16000)
+```
+
+---
+
+## Dropping Silence (Keeping Non-Speech)
+
+`drop_chunks` is the inverse of `collect_chunks` — it removes the detected speech regions and returns the remaining (non-speech) audio.
+
+```python
+from silero_vad import load_silero_vad, read_audio, get_speech_timestamps, drop_chunks
+
+model = load_silero_vad()
+wav = read_audio('path/to/audio.wav')
+
+speech_timestamps = get_speech_timestamps(wav, model)
+
+# Remove speech — keep only background/noise
+no_speech = drop_chunks(speech_timestamps, wav)
+print(f"Non-speech audio: {len(no_speech)} samples")
+```

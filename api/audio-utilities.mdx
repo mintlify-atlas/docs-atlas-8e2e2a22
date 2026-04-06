@@ -1,0 +1,229 @@
+---
+title: "Audio Utilities"
+description: "Helper functions for loading, saving, and slicing audio with Silero VAD."
+---
+
+The `silero_vad` package ships four audio utility functions alongside the VAD model and detection
+APIs. They cover the most common pre- and post-processing steps: loading audio from disk,
+saving results, and extracting or removing speech segments from a waveform.
+
+## `read_audio`
+
+Load an audio file from disk and return a 1-D float tensor, resampled and converted to mono.
+
+```python
+read_audio(path, sampling_rate=16000)
+```
+
+### Parameters
+
+<ParamField body="path" type="string" required>
+  Path to the audio file. Any format supported by torchaudio (or torchcodec, see note below) is
+  accepted.
+</ParamField>
+
+<ParamField body="sampling_rate" type="integer" default="16000">
+  Target sample rate. The loaded audio is resampled to this rate using
+  `torchaudio.transforms.Resample` if the file's native rate differs.
+</ParamField>
+
+### Returns
+
+<ResponseField name="wav" type="torch.Tensor">
+  One-dimensional float `torch.Tensor` of shape `(num_samples,)`, mono, at the requested sample
+  rate.
+</ResponseField>
+
+<Note>
+  **torchaudio ≥ 2.9:** `torchaudio.load` is tried first. If it fails, the function falls back to
+  `torchcodec.decoders.AudioDecoder`. If `torchcodec` is not installed, a `RuntimeError` is raised
+  suggesting you either install `torchcodec` or pin `torchaudio < 2.9`.
+
+  **torchaudio < 2.9:** `torchaudio.sox_effects` is used for channel mixing and resampling; if that
+  fails, plain `torchaudio.load` is used as a fallback.
+</Note>
+
+---
+
+## `save_audio`
+
+Save a tensor to an audio file as 16-bit PCM.
+
+```python
+save_audio(path, tensor, sampling_rate=16000)
+```
+
+### Parameters
+
+<ParamField body="path" type="string" required>
+  Destination file path. The file format is inferred from the extension (e.g. `.wav`).
+</ParamField>
+
+<ParamField body="tensor" type="torch.Tensor" required>
+  Audio tensor to save. Can be 1-D `(num_samples,)` or 2-D `(1, num_samples)`. The tensor is
+  automatically moved to CPU before saving.
+</ParamField>
+
+<ParamField body="sampling_rate" type="integer" default="16000">
+  Sample rate written to the audio file header.
+</ParamField>
+
+### Returns
+
+None.
+
+<Note>
+  Audio is saved at 16-bit PCM depth (`bits_per_sample=16`). For torchaudio ≥ 2.9, saving falls
+  back to `torchcodec.encoders.AudioEncoder` when `torchaudio.save` raises an exception. Install
+  `torchcodec` or pin `torchaudio < 2.9` if you encounter issues.
+</Note>
+
+---
+
+## `collect_chunks`
+
+Concatenate the speech segments from a waveform into a single tensor, discarding silence.
+
+```python
+collect_chunks(tss, wav, seconds=False, sampling_rate=None)
+```
+
+### Parameters
+
+<ParamField body="tss" type="List[dict]" required>
+  List of segment coordinate dicts, each with `'start'` and `'end'` keys. Typically the output of
+  [`get_speech_timestamps()`](/api/get-speech-timestamps).
+</ParamField>
+
+<ParamField body="wav" type="torch.Tensor" required>
+  One-dimensional float `torch.Tensor` — the full audio from which chunks are extracted.
+</ParamField>
+
+<ParamField body="seconds" type="boolean" default="false">
+  When `True`, interpret `tss` coordinates as seconds rather than sample indices.
+</ParamField>
+
+<ParamField body="sampling_rate" type="integer" default="None">
+  Audio sample rate. Required when `seconds=True` so that second-based coordinates can be converted
+  to sample indices.
+</ParamField>
+
+### Returns
+
+<ResponseField name="chunks" type="torch.Tensor">
+  One-dimensional float `torch.Tensor` containing all detected speech segments concatenated in
+  order.
+</ResponseField>
+
+### Raises
+
+`ValueError` — if `seconds=True` but `sampling_rate` is not provided.
+
+---
+
+## `drop_chunks`
+
+Return the audio with all speech segments removed, leaving only the non-speech (silence) regions.
+
+```python
+drop_chunks(tss, wav, seconds=False, sampling_rate=None)
+```
+
+### Parameters
+
+<ParamField body="tss" type="List[dict]" required>
+  List of segment coordinate dicts with `'start'` and `'end'` keys. Typically the output of
+  [`get_speech_timestamps()`](/api/get-speech-timestamps).
+</ParamField>
+
+<ParamField body="wav" type="torch.Tensor" required>
+  One-dimensional float `torch.Tensor` — the full audio from which chunks are dropped.
+</ParamField>
+
+<ParamField body="seconds" type="boolean" default="false">
+  When `True`, interpret `tss` coordinates as seconds rather than sample indices.
+</ParamField>
+
+<ParamField body="sampling_rate" type="integer" default="None">
+  Audio sample rate. Required when `seconds=True`.
+</ParamField>
+
+### Returns
+
+<ResponseField name="result" type="torch.Tensor">
+  One-dimensional float `torch.Tensor` of the input audio minus the dropped speech segments. All
+  non-speech regions are concatenated in order.
+</ResponseField>
+
+### Raises
+
+`ValueError` — if `seconds=True` but `sampling_rate` is not provided.
+
+---
+
+## End-to-end example
+
+The typical pipeline: load audio → detect speech → extract speech-only audio → save.
+
+```python
+from silero_vad import (
+    load_silero_vad,
+    read_audio,
+    get_speech_timestamps,
+    collect_chunks,
+    save_audio,
+)
+
+SAMPLING_RATE = 16000
+
+# 1. Load model
+model = load_silero_vad()
+
+# 2. Load audio
+wav = read_audio('interview.wav', sampling_rate=SAMPLING_RATE)
+
+# 3. Detect speech segments
+speech_timestamps = get_speech_timestamps(
+    wav,
+    model,
+    sampling_rate=SAMPLING_RATE,
+    threshold=0.5,
+)
+
+print(speech_timestamps)
+# [{'start': 1280, 'end': 27648}, {'start': 31232, 'end': 54016}]
+
+# 4. Concatenate only the speech regions
+speech_only = collect_chunks(speech_timestamps, wav)
+
+# 5. Save the result
+save_audio('interview_speech_only.wav', speech_only, sampling_rate=SAMPLING_RATE)
+```
+
+To remove speech and keep only silence (useful for noise profiling or diarization):
+
+```python
+from silero_vad import drop_chunks
+
+silence_only = drop_chunks(speech_timestamps, wav)
+save_audio('interview_silence_only.wav', silence_only, sampling_rate=SAMPLING_RATE)
+```
+
+Working with second-based timestamps:
+
+```python
+speech_timestamps_s = get_speech_timestamps(
+    wav,
+    model,
+    sampling_rate=SAMPLING_RATE,
+    return_seconds=True,
+)
+
+# Pass seconds=True and provide the sampling rate for conversion
+speech_only = collect_chunks(
+    speech_timestamps_s,
+    wav,
+    seconds=True,
+    sampling_rate=SAMPLING_RATE,
+)
+```

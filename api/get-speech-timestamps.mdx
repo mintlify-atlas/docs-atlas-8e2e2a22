@@ -1,0 +1,193 @@
+---
+title: "get_speech_timestamps"
+description: "Split long audio into speech segments using Silero VAD."
+---
+
+Splits long audio into speech chunks using Silero VAD. The function runs the model over the audio in fixed-size windows, collects per-window speech probabilities, and applies threshold logic to produce a list of start/end coordinates for every detected speech segment.
+
+## Function signature
+
+```python
+get_speech_timestamps(
+    audio,
+    model,
+    threshold=0.5,
+    sampling_rate=16000,
+    min_speech_duration_ms=250,
+    max_speech_duration_s=float('inf'),
+    min_silence_duration_ms=100,
+    speech_pad_ms=30,
+    return_seconds=False,
+    time_resolution=1,
+    visualize_probs=False,
+    progress_tracking_callback=None,
+    neg_threshold=None,
+    window_size_samples=512,
+    min_silence_at_max_speech=98,
+    use_max_poss_sil_at_max_speech=True,
+)
+```
+
+## Parameters
+
+<ParamField body="audio" type="torch.Tensor" required>
+  One-dimensional float `torch.Tensor`. Other array-like types are cast to a tensor automatically if
+  possible. Multi-channel audio is not supported — ensure the tensor is mono before passing it in.
+</ParamField>
+
+<ParamField body="model" required>
+  Preloaded Silero VAD model — either the JIT model or an `OnnxWrapper`. Load it with
+  [`load_silero_vad()`](/api/load-silero-vad).
+</ParamField>
+
+<ParamField body="threshold" type="float" default="0.5">
+  Speech probability threshold. Frame probabilities **above** this value are classified as speech.
+  The default of `0.5` works well for most datasets; tune per dataset for best results.
+</ParamField>
+
+<ParamField body="sampling_rate" type="integer" default="16000">
+  Sample rate of the input audio. Silero VAD supports `8000` and `16000` Hz, or any multiple of
+  `16000` (which is automatically downsampled to `16000`).
+</ParamField>
+
+<ParamField body="min_speech_duration_ms" type="integer" default="250">
+  Minimum speech chunk duration in milliseconds. Final speech chunks shorter than this value are
+  discarded.
+</ParamField>
+
+<ParamField body="max_speech_duration_s" type="float" default="inf">
+  Maximum duration of a single speech chunk in seconds. Chunks longer than this limit are split at
+  the timestamp of the last silence longer than `min_silence_at_max_speech` ms (if any), to avoid
+  aggressive cuts. When no such silence exists, the chunk is cut at the limit boundary.
+</ParamField>
+
+<ParamField body="min_silence_duration_ms" type="integer" default="100">
+  Minimum silence duration in milliseconds that must be observed at the end of a speech chunk before
+  it is closed.
+</ParamField>
+
+<ParamField body="speech_pad_ms" type="integer" default="30">
+  Padding in milliseconds added to both sides of every detected speech chunk.
+</ParamField>
+
+<ParamField body="return_seconds" type="boolean" default="false">
+  When `True`, return timestamps as seconds (float). When `False` (default), return timestamps as
+  sample indices (integer).
+</ParamField>
+
+<ParamField body="time_resolution" type="integer" default="1">
+  Number of decimal places used when rounding timestamps to seconds. Only used when
+  `return_seconds=True`.
+</ParamField>
+
+<ParamField body="visualize_probs" type="boolean" default="false">
+  When `True`, render a speech-probability histogram using `pandas` and `matplotlib`. Requires both
+  packages to be installed.
+</ParamField>
+
+<ParamField body="progress_tracking_callback" type="Callable[[float], None]" default="None">
+  Optional callback invoked after each audio window is processed. Receives a single `float` argument
+  representing progress as a percentage (`0.0`–`100.0`).
+</ParamField>
+
+<ParamField body="neg_threshold" type="float" default="threshold - 0.15">
+  Negative (exit) threshold. When the model is in a speech state, a frame probability **below** this
+  value is treated as silence. Defaults to `max(threshold - 0.15, 0.01)` when not set.
+</ParamField>
+
+<ParamField body="window_size_samples" type="integer" default="512" deprecated>
+  **Deprecated — does nothing.** The window size is determined automatically from `sampling_rate`
+  (`512` for 16 kHz, `256` for 8 kHz).
+</ParamField>
+
+<ParamField body="min_silence_at_max_speech" type="integer" default="98">
+  Minimum silence duration in milliseconds used to find a safe split point when a chunk reaches
+  `max_speech_duration_s`. Avoids abrupt cuts mid-word.
+</ParamField>
+
+<ParamField body="use_max_poss_sil_at_max_speech" type="boolean" default="true">
+  When `True` (default), the **longest** available silence segment within the chunk is used as the
+  split point at `max_speech_duration_s`. When `False`, the **last** detected silence is used
+  (legacy behavior).
+</ParamField>
+
+## Returns
+
+<ResponseField name="speeches" type="list[dict]">
+  A list of speech segment dictionaries sorted by position in the audio.
+
+  <Expandable title="dict fields">
+    <ResponseField name="start" type="integer | float">
+      Start of the speech segment. An integer sample index when `return_seconds=False`, or a float
+      number of seconds when `return_seconds=True`.
+    </ResponseField>
+    <ResponseField name="end" type="integer | float">
+      End of the speech segment. Same type as `start`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Example
+
+```python
+from silero_vad import load_silero_vad, read_audio, get_speech_timestamps
+
+model = load_silero_vad()
+wav = read_audio('audio.wav', sampling_rate=16000)
+
+speech_timestamps = get_speech_timestamps(
+    wav,
+    model,
+    sampling_rate=16000,
+)
+
+print(speech_timestamps)
+# [{'start': 1280, 'end': 27648}, {'start': 31232, 'end': 54016}, ...]
+```
+
+Return timestamps in seconds instead of samples:
+
+```python
+speech_timestamps = get_speech_timestamps(
+    wav,
+    model,
+    sampling_rate=16000,
+    return_seconds=True,
+    time_resolution=2,
+)
+
+print(speech_timestamps)
+# [{'start': 0.08, 'end': 1.73}, {'start': 1.95, 'end': 3.38}, ...]
+```
+
+Track progress during long-file processing:
+
+```python
+def on_progress(percent: float):
+    print(f'Processing: {percent:.1f}%')
+
+speech_timestamps = get_speech_timestamps(
+    wav,
+    model,
+    sampling_rate=16000,
+    progress_tracking_callback=on_progress,
+)
+```
+
+## Notes
+
+<Tip>
+  The default threshold of `0.5` is a sensible starting point, but speech detection accuracy
+  improves when you tune `threshold` for your specific recording conditions. Lower values increase
+  recall (fewer missed words) at the cost of precision; higher values do the opposite.
+</Tip>
+
+<Note>
+  `sampling_rate` values that are multiples of 16000 (e.g. 32000, 48000) are automatically
+  downsampled to 16000. A `UserWarning` is emitted when this happens.
+</Note>
+
+<Warning>
+  `window_size_samples` is deprecated and has no effect. Remove it from any existing call sites to
+  avoid confusion.
+</Warning>

@@ -1,0 +1,76 @@
+---
+title: "Introduction"
+description: "Silero VAD is a pre-trained, enterprise-grade Voice Activity Detector that runs on PyTorch JIT and ONNX runtimes with sub-millisecond CPU inference."
+---
+
+## What is Silero VAD?
+
+Silero VAD is a pre-trained [Voice Activity Detector](https://en.wikipedia.org/wiki/Voice_activity_detection) (VAD) that identifies speech segments in audio streams and files. It ships as a compact, self-contained model (~2 MB) with a simple Python API, and requires no registration, API keys, or internet access at inference time.
+
+The model was trained on corpora spanning **6,000+ languages**, making it robust across diverse domains, recording conditions, and background noise levels. It supports **8 kHz and 16 kHz** sampling rates and exposes the same interface for both PyTorch JIT and ONNX backends.
+
+<Note>
+  Silero VAD is published under the MIT license — no telemetry, no keys, no built-in expiration, and no vendor lock-in.
+</Note>
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Fast" icon="bolt">
+    One 30ms audio chunk takes less than **1ms** to process on a single CPU thread. GPU inference and batching can improve throughput further.
+  </Card>
+  <Card title="Accurate" icon="bullseye">
+    Excellent results on speech detection benchmarks, trained on over **6,000 languages** with diverse noise levels and recording conditions.
+  </Card>
+  <Card title="Lightweight" icon="feather">
+    The JIT model weighs around **2 MB**, making it easy to embed in edge, IoT, and mobile applications.
+  </Card>
+  <Card title="Flexible sampling rate" icon="sliders">
+    Natively supports **8 kHz and 16 kHz** sampling rates. Multiples of 16 kHz (e.g., 32 kHz, 48 kHz) are downsampled automatically.
+  </Card>
+  <Card title="Highly portable" icon="boxes-stacked">
+    Runs anywhere **PyTorch** or **ONNX Runtime** is available, including x86-64, ARM, and browser (ONNX Runtime Web).
+  </Card>
+  <Card title="MIT license" icon="scale-balanced">
+    Permissive license with no strings attached — use it in commercial products without restrictions.
+  </Card>
+</CardGroup>
+
+## Supported runtimes
+
+Silero VAD ships with two model formats. Both expose the same Python-level API.
+
+| Runtime | Format | Notes |
+| --- | --- | --- |
+| PyTorch JIT | `silero_vad.jit` | Default. Requires `torch >= 1.12.0`. |
+| ONNX | `silero_vad.onnx` (opset 16) | Requires `onnxruntime >= 1.16.1`. Up to 4–5× faster than JIT in some conditions. |
+
+Load the ONNX model by passing `onnx=True` to `load_silero_vad`:
+
+```python
+from silero_vad import load_silero_vad
+
+model = load_silero_vad(onnx=True)
+```
+
+<Tip>
+  ONNX Runtime can run on any platform it supports, including architectures not covered by the default PyTorch wheels. See the [ONNX Runtime getting started guide](https://onnxruntime.ai/getting-started) for the full platform list.
+</Tip>
+
+## Typical use cases
+
+- **IoT and edge devices** — deploy on resource-constrained hardware using the lightweight ONNX model.
+- **Telephony and call-center automation** — filter silence from call recordings, detect when agents or customers are speaking, and trigger downstream transcription only on speech segments.
+- **Data cleaning and preparation** — automatically segment large audio archives into speech and non-speech regions.
+- **Voice interfaces** — gate wake-word detectors or speech-to-text pipelines so they only activate during speech.
+
+## Get started
+
+<CardGroup cols={2}>
+  <Card title="Quick start" icon="rocket" href="/quickstart">
+    Detect speech in an audio file in under 5 minutes.
+  </Card>
+  <Card title="API reference" icon="code" href="/api/load-silero-vad">
+    Full Python API documentation with all parameters.
+  </Card>
+</CardGroup>

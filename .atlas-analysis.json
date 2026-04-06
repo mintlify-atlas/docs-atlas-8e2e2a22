@@ -1,0 +1,80 @@
+{
+  "projectType": "ai-ml",
+  "projectName": "Silero VAD",
+  "projectDescription": "A pre-trained, enterprise-grade Voice Activity Detector supporting PyTorch and ONNX runtimes with sub-millisecond inference on CPU.",
+  "theme": "luma",
+  "primaryColor": "#94cb04",
+  "lightColor": "#545454",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/pytorch-usage",
+              "guides/onnx-usage",
+              "guides/streaming",
+              "guides/fine-tuning",
+              "guides/language-integrations"
+            ]
+          },
+          {
+            "group": "Model & Performance",
+            "pages": [
+              "model/overview",
+              "model/performance",
+              "model/quality-metrics",
+              "model/versions"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Python API",
+            "pages": [
+              "api/load-silero-vad",
+              "api/get-speech-timestamps",
+              "api/vad-iterator",
+              "api/audio-utilities"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Sub-millisecond inference per audio chunk on a single CPU thread",
+    "Supports PyTorch JIT and ONNX runtimes",
+    "Trained on 6000+ languages with robust noise tolerance",
+    "Supports 8000 Hz and 16000 Hz sampling rates",
+    "Streaming / real-time VAD via VADIterator",
+    "Fine-tuning support for custom domains",
+    "MIT license with no telemetry or vendor lock-in",
+    "Community integrations in C++, Rust, Go, Java, C#, and more"
+  ],
+  "publicApiSurface": [
+    "load_silero_vad(onnx=False, opset_version=16)",
+    "get_speech_timestamps(audio, model, threshold, sampling_rate, ...)",
+    "VADIterator(model, threshold, sampling_rate, min_silence_duration_ms, speech_pad_ms)",
+    "read_audio(path, sampling_rate=16000)",
+    "save_audio(path, tensor, sampling_rate=16000)",
+    "collect_chunks(tss, wav, seconds=False, sampling_rate=None)",
+    "drop_chunks(tss, wav, seconds=False, sampling_rate=None)",
+    "OnnxWrapper(path, force_onnx_cpu=False)",
+    "torch.hub.load('snakers4/silero-vad', 'silero_vad')"
+  ]
+}

@@ -1,0 +1,181 @@
+---
+title: "Real-Time Streaming"
+description: "Use VADIterator to detect speech boundaries incrementally in real-time audio streams."
+---
+
+## Overview
+
+`VADIterator` is designed for **chunk-by-chunk streaming** scenarios — microphones, telephony, WebSocket audio, or any source where audio arrives in fixed-size frames. It maintains state between calls and emits speech boundary events when a segment starts or ends.
+
+Unlike `get_speech_timestamps` (which requires the full audio upfront), `VADIterator` operates with sub-32ms latency per chunk.
+
+<Note>
+`VADIterator` supports **only 8000 Hz and 16000 Hz** sampling rates. Multiples of 16000 (e.g., 32000, 48000) are **not** accepted — pass the raw sample rate and downsample your audio before feeding it in.
+</Note>
+
+---
+
+## Setup
+
+<Steps>
+  <Step title="Install the package">
+    ```bash
+    pip install silero-vad
+    ```
+  </Step>
+
+  <Step title="Load the model">
+    ```python
+    from silero_vad import load_silero_vad
+
+    model = load_silero_vad()
+    ```
+  </Step>
+
+  <Step title="Instantiate VADIterator">
+    ```python
+    from silero_vad import VADIterator
+
+    vad_iterator = VADIterator(
+        model,
+        threshold=0.5,              # speech probability threshold
+        sampling_rate=16000,        # must be 8000 or 16000
+        min_silence_duration_ms=100,# ms of silence before ending a segment
+        speech_pad_ms=30,           # ms of padding added to each side
+    )
+    ```
+  </Step>
+
+  <Step title="Feed audio chunks in a loop">
+    Process chunks one at a time and inspect the return value for speech events.
+
+    ```python
+    import torch
+
+    # Required chunk sizes:
+    #   512 samples at 16000 Hz  (~32 ms)
+    #   256 samples at  8000 Hz  (~32 ms)
+    CHUNK_SIZE = 512
+    SAMPLE_RATE = 16000
+
+    for chunk in audio_chunks:   # your audio source here
+        result = vad_iterator(chunk, return_seconds=False)
+
+        if result is not None:
+            if 'start' in result:
+                print(f"Speech started at sample {result['start']}")
+            elif 'end' in result:
+                print(f"Speech ended   at sample {result['end']}")
+    ```
+  </Step>
+
+  <Step title="Reset between streams">
+    Call `reset_states()` before processing each new, independent audio stream.
+
+    ```python
+    vad_iterator.reset_states()
+    ```
+  </Step>
+</Steps>
+
+---
+
+## VADIterator Constructor Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `model` | — | A loaded JIT or ONNX Silero VAD model |
+| `threshold` | `0.5` | Probability threshold; values above this are speech |
+| `sampling_rate` | `16000` | Input audio sample rate (`8000` or `16000` only) |
+| `min_silence_duration_ms` | `100` | Milliseconds of continuous silence before ending a segment |
+| `speech_pad_ms` | `30` | Milliseconds of padding added to each segment boundary |
+
+---
+
+## Return Values
+
+`VADIterator.__call__` returns one of three values per chunk:
+
+| Return value | Meaning |
+|---|---|
+| `{'start': N}` | Speech has started at sample `N` |
+| `{'end': N}` | Speech has ended at sample `N` |
+| `None` | No boundary event in this chunk |
+
+Pass `return_seconds=True` to receive timestamps in seconds instead of samples.
+
+---
+
+## Chunk Size Requirements
+
+The model processes audio in fixed windows. Providing chunks of the wrong size raises a `ValueError`.
+
+| Sampling Rate | Required Chunk Size | Duration |
+|---|---|---|
+| 16000 Hz | 512 samples | ~32 ms |
+| 8000 Hz | 256 samples | ~32 ms |
+
+---
+
+## Full Streaming Example
+
+The following example simulates a microphone-like source by splitting a loaded audio file into fixed chunks and processing them with `VADIterator`:
+
+```python
+import torch
+from silero_vad import load_silero_vad, read_audio, VADIterator
+
+SAMPLE_RATE = 16000
+CHUNK_SIZE = 512  # 512 @ 16000 Hz = ~32 ms per chunk
+
+model = load_silero_vad()
+vad_iterator = VADIterator(model, sampling_rate=SAMPLE_RATE)
+
+wav = read_audio('path/to/audio.wav')  # 1-D float tensor at 16000 Hz
+
+speech_segments = []
+current_start = None
+
+for i in range(0, len(wav), CHUNK_SIZE):
+    chunk = wav[i : i + CHUNK_SIZE]
+
+    # Pad the last incomplete chunk with zeros
+    if len(chunk) < CHUNK_SIZE:
+        chunk = torch.nn.functional.pad(chunk, (0, CHUNK_SIZE - len(chunk)))
+
+    result = vad_iterator(chunk, return_seconds=True)
+
+    if result is not None:
+        if 'start' in result:
+            current_start = result['start']
+            print(f"  >> Speech start: {result['start']:.2f}s")
+        elif 'end' in result and current_start is not None:
+            speech_segments.append({'start': current_start, 'end': result['end']})
+            print(f"  >> Speech end  : {result['end']:.2f}s")
+            current_start = None
+
+# Reset before processing the next file
+vad_iterator.reset_states()
+
+print(f"\nDetected {len(speech_segments)} speech segment(s):")
+for seg in speech_segments:
+    print(f"  {seg['start']:.2f}s → {seg['end']:.2f}s")
+```
+
+---
+
+## Resetting Between Streams
+
+`reset_states()` clears the model's internal RNN hidden states **and** all iterator tracking variables (`triggered`, `temp_end`, `current_sample`). Always call it when moving to a new, unrelated audio source:
+
+```python
+# Stream 1
+vad_iterator.reset_states()
+for chunk in stream_1:
+    vad_iterator(chunk)
+
+# Stream 2
+vad_iterator.reset_states()
+for chunk in stream_2:
+    vad_iterator(chunk)
+```

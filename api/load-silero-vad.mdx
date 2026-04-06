@@ -1,0 +1,86 @@
+---
+title: "load_silero_vad"
+description: "Load the Silero VAD model — either the TorchScript JIT model or an ONNX variant."
+---
+
+Loads a pre-trained Silero VAD model from the package's bundled data. By default, a TorchScript (JIT) model is returned. Pass `onnx=True` to load an ONNX model instead.
+
+## Function signature
+
+```python
+load_silero_vad(onnx=False, opset_version=16)
+```
+
+## Parameters
+
+<ParamField body="onnx" type="boolean" default="false">
+  Whether to load the ONNX model instead of the TorchScript JIT model. Requires `onnxruntime` to be installed.
+</ParamField>
+
+<ParamField body="opset_version" type="integer" default="16">
+  ONNX opset version to use. Only relevant when `onnx=True`. Available values: `15`, `16`.
+</ParamField>
+
+## Returns
+
+The loaded VAD model:
+
+- `onnx=False` — returns a TorchScript `torch.jit.ScriptModule` loaded from `silero_vad.jit`.
+- `onnx=True` — returns an `OnnxWrapper` instance backed by an ONNX Runtime inference session.
+
+## Raises
+
+`Exception` — if `onnx=True` and `opset_version` is not `15` or `16`.
+
+## Examples
+
+<CodeGroup>
+
+```python JIT model (default)
+from silero_vad import load_silero_vad
+
+model = load_silero_vad()
+```
+
+```python ONNX model (opset 16)
+from silero_vad import load_silero_vad
+
+model = load_silero_vad(onnx=True, opset_version=16)
+```
+
+```python ONNX model (opset 15)
+from silero_vad import load_silero_vad
+
+model = load_silero_vad(onnx=True, opset_version=15)
+```
+
+```python torch.hub alternative
+import torch
+
+model, utils = torch.hub.load(
+    repo_or_dir='snakers4/silero-vad',
+    model='silero_vad',
+    force_reload=True
+)
+```
+
+</CodeGroup>
+
+<Note>
+  `model.py` calls `torch.set_num_threads(1)` at import time. This is the recommended setting for
+  real-time or latency-sensitive inference with Silero VAD. Override it after import only if you
+  have profiled your specific workload and confirmed that more threads help.
+</Note>
+
+<Warning>
+  `load_silero_vad(onnx=True)` always passes `force_onnx_cpu=True` to `OnnxWrapper`, pinning the
+  ONNX session to the CPU execution provider. If you need ONNX GPU inference, instantiate
+  `OnnxWrapper` directly with `force_onnx_cpu=False`:
+
+  ```python
+  from silero_vad.utils_vad import OnnxWrapper
+
+  # Loads model file from the package data directory — adjust path as needed
+  model = OnnxWrapper('path/to/silero_vad.onnx', force_onnx_cpu=False)
+  ```
+</Warning>

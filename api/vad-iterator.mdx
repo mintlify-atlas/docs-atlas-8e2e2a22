@@ -1,0 +1,167 @@
+---
+title: "VADIterator"
+description: "Streaming, chunk-by-chunk voice activity detection for real-time audio pipelines."
+---
+
+`VADIterator` processes audio one chunk at a time and emits events when speech starts or ends. It is designed for real-time or streaming scenarios where the full audio file is not available upfront — for example, a microphone capture loop.
+
+## Class overview
+
+```python
+from silero_vad import VADIterator
+
+vad = VADIterator(model)
+
+for chunk in audio_chunks:
+    result = vad(chunk)
+    if result:
+        print(result)  # {'start': ...} or {'end': ...}
+```
+
+Call `reset_states()` between independent audio sources to clear the model's internal recurrent state.
+
+## Constructor
+
+```python
+VADIterator(
+    model,
+    threshold=0.5,
+    sampling_rate=16000,
+    min_silence_duration_ms=100,
+    speech_pad_ms=30,
+)
+```
+
+### Parameters
+
+<ParamField body="model" required>
+  Preloaded Silero VAD model — either the JIT model or an `OnnxWrapper`. Load it with
+  [`load_silero_vad()`](/api/load-silero-vad).
+</ParamField>
+
+<ParamField body="threshold" type="float" default="0.5">
+  Speech probability threshold. Frame probabilities **above** this value are classified as speech.
+  The default of `0.5` is a good starting point; tune per dataset for best results.
+</ParamField>
+
+<ParamField body="sampling_rate" type="integer" default="16000">
+  Sample rate of the audio chunks. Must be exactly `8000` or `16000`. Unlike
+  `get_speech_timestamps`, `VADIterator` does **not** accept multiples of 16000.
+</ParamField>
+
+<ParamField body="min_silence_duration_ms" type="integer" default="100">
+  Minimum silence duration in milliseconds that must be observed before a speech segment is closed
+  and an `end` event is emitted.
+</ParamField>
+
+<ParamField body="speech_pad_ms" type="integer" default="30">
+  Padding in milliseconds added to both the start and end boundaries of each detected speech chunk.
+</ParamField>
+
+## Methods
+
+### `__call__(x, return_seconds=False, time_resolution=1)`
+
+Process a single audio chunk and return a boundary event or `None`.
+
+#### Parameters
+
+<ParamField body="x" type="torch.Tensor" required>
+  Audio chunk as a `torch.Tensor`. Must be exactly **512 samples** at 16 kHz or **256 samples** at
+  8 kHz. Other array-like types are cast to a tensor automatically if possible.
+</ParamField>
+
+<ParamField body="return_seconds" type="boolean" default="false">
+  When `True`, return timestamps as seconds. When `False` (default), return timestamps as sample
+  indices.
+</ParamField>
+
+<ParamField body="time_resolution" type="integer" default="1">
+  Number of decimal places used when rounding timestamps to seconds. Only used when
+  `return_seconds=True`.
+</ParamField>
+
+#### Returns
+
+<ResponseField name="result" type="dict | None">
+  - `{'start': int | float}` — emitted once when speech begins. The value is the start sample (or
+    second) of the speech segment including padding.
+  - `{'end': int | float}` — emitted once after sufficient silence follows speech. The value is the
+    end sample (or second) of the speech segment including padding.
+  - `None` — no boundary event for this chunk.
+</ResponseField>
+
+---
+
+### `reset_states()`
+
+Reset all internal state: model hidden states, speech trigger flag, silence timer, and sample
+counter.
+
+Call this method between independent audio sources (e.g., between files, between separate
+microphone sessions). Failing to reset states can cause the model to carry over context from a
+previous stream.
+
+#### Parameters
+
+None.
+
+#### Returns
+
+None.
+
+## Chunk size requirements
+
+| Sample rate | Required chunk size |
+|-------------|---------------------|
+| 16000 Hz    | 512 samples         |
+| 8000 Hz     | 256 samples         |
+
+<Warning>
+  `VADIterator` only accepts `sampling_rate=8000` or `sampling_rate=16000`. It raises a
+  `ValueError` for any other value, including multiples of 16000 that `get_speech_timestamps`
+  accepts. Split or resample your audio accordingly before creating the iterator.
+</Warning>
+
+## Full streaming example
+
+```python
+import torch
+from silero_vad import load_silero_vad, read_audio, VADIterator
+
+SAMPLING_RATE = 16000
+CHUNK_SIZE = 512  # samples per chunk at 16 kHz
+
+model = load_silero_vad()
+vad_iterator = VADIterator(model, sampling_rate=SAMPLING_RATE)
+
+wav = read_audio('audio.wav', sampling_rate=SAMPLING_RATE)
+
+# Iterate over fixed-size chunks
+for i in range(0, len(wav), CHUNK_SIZE):
+    chunk = wav[i : i + CHUNK_SIZE]
+    if len(chunk) < CHUNK_SIZE:
+        # Pad the final incomplete chunk
+        chunk = torch.nn.functional.pad(chunk, (0, CHUNK_SIZE - len(chunk)))
+
+    result = vad_iterator(chunk, return_seconds=True)
+    if result:
+        print(result)
+        # {'start': 0.5} when speech begins
+        # {'end': 2.3}   when speech ends
+
+# Always reset between unrelated audio sources
+vad_iterator.reset_states()
+```
+
+<Tip>
+  Collect `start`/`end` events into pairs to reconstruct full speech segment coordinates, then pass
+  them to [`collect_chunks()`](/api/audio-utilities#collect_chunks) to extract the speech-only
+  audio.
+</Tip>
+
+<Note>
+  The internal silence exit threshold used by `__call__` is hardcoded to
+  `threshold - 0.15` and is not configurable at call time. Adjust `threshold` at construction to
+  influence both the entry and exit sensitivities together.
+</Note>

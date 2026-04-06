@@ -1,0 +1,158 @@
+---
+title: "Fine-Tuning"
+description: "Adapt Silero VAD to custom domains, noise conditions, or specific languages using the tuning scripts."
+---
+
+## When to Fine-Tune
+
+The pre-trained Silero VAD model was trained on a massive corpus covering 6000+ languages with diverse noise conditions. However, fine-tuning can improve accuracy when:
+
+- Your audio domain is highly specialized (e.g., industrial noise, specific telephony codecs)
+- You need tighter thresholds for a specific language or accent
+- Background noise patterns in your deployment differ significantly from general web audio
+- You require a custom balance between false-positive and false-negative rates
+
+---
+
+## Dependencies
+
+Install the extra dependencies required for fine-tuning:
+
+```bash
+pip install torchaudio>=0.12.0 omegaconf>=2.3.0 scikit-learn>=1.2.0 pandas>=2.2.2 tqdm torch>=1.12.0
+```
+
+The tuning scripts are located in the `tuning/` directory of the repository.
+
+---
+
+## Workflow
+
+<Steps>
+  <Step title="Prepare your data">
+    Fine-tuning requires two `.feather` files: one for training and one for validation.
+
+    Each `.feather` file must contain exactly two columns:
+
+    | Column | Type | Description |
+    |--------|------|-------------|
+    | `audio_path` | `str` | Absolute path to a PCM audio file (`.wav` or `.opus` recommended) |
+    | `speech_ts` | `list[dict]` | List of speech segment timestamps in seconds |
+
+    The `speech_ts` format is a list of dicts with `start` and `end` keys:
+
+    ```python
+    # Example speech_ts value for a single audio file
+    [
+        {'start': 0.5, 'end': 2.3},
+        {'start': 4.1, 'end': 6.8},
+    ]
+    ```
+
+    Timestamps should be accurate to **30 ms** for best results.
+
+    <Note>
+    Pre-resample your audio files to **16000 Hz** before fine-tuning. This is not required, but it significantly speeds up training by avoiding on-the-fly resampling for every batch.
+    </Note>
+
+    A reference example dataframe is available in `tuning/example_dataframe.feather`.
+  </Step>
+
+  <Step title="Configure config.yml">
+    Edit `tuning/config.yml` with your dataset paths and training hyperparameters.
+
+    ```yaml
+    # Dataset paths
+    train_dataset_path: /absolute/path/to/train.feather
+    val_dataset_path: /absolute/path/to/val.feather
+
+    # Model source (choose one approach)
+    jit_model_path:        # leave empty to auto-download
+    use_torchhub: false    # true = load via torch.hub, false = load via pip package
+
+    # Which model head to tune
+    tune_8k: false         # false = 16000 Hz head, true = 8000 Hz head
+
+    # Output
+    model_save_path: /absolute/path/to/save/tuned_model.jit
+
+    # Training parameters
+    noise_loss: 0.5        # loss weight for non-speech windows
+    max_train_length_sec: 30
+    aug_prob: 0.5
+    learning_rate: 0.0001
+    batch_size: 32
+    num_workers: 4
+    num_epochs: 10
+    device: cpu            # or cuda
+    ```
+
+    ### Parameter Reference
+
+    | Parameter | Description |
+    |-----------|-------------|
+    | `train_dataset_path` | Absolute path to the training `.feather` file |
+    | `val_dataset_path` | Absolute path to the validation `.feather` file |
+    | `jit_model_path` | Path to a `.jit` model file; leave empty to download automatically |
+    | `use_torchhub` | If `true`, loads the base model via `torch.hub`; if `false`, loads via the `silero-vad` pip package |
+    | `tune_8k` | `true` = fine-tune the 8000 Hz head; `false` = fine-tune the 16000 Hz head |
+    | `model_save_path` | Path where the best checkpoint (`.jit`) is saved |
+    | `noise_loss` | Loss coefficient applied to non-speech windows; lower values reduce false negatives |
+    | `max_train_length_sec` | Audio files longer than this are truncated per batch |
+    | `aug_prob` | Probability that data augmentation is applied to each sample |
+    | `learning_rate` | Optimizer learning rate |
+    | `batch_size` | Number of samples per training/validation batch |
+    | `num_workers` | DataLoader worker processes for parallel data loading |
+    | `num_epochs` | Total training epochs; the best ROC-AUC checkpoint is saved |
+    | `device` | `cpu` or `cuda` |
+  </Step>
+
+  <Step title="Run fine-tuning">
+    From the `tuning/` directory:
+
+    ```bash
+    python tune.py
+    ```
+
+    Training runs for `num_epochs` epochs. After each epoch, the model is evaluated on the validation set. The **best checkpoint** by validation ROC-AUC is saved automatically to `model_save_path` in `.jit` format.
+  </Step>
+
+  <Step title="Search for optimal thresholds">
+    After fine-tuning, find the best speech/silence thresholds for your validation data:
+
+    ```bash
+    python search_thresholds.py
+    ```
+
+    This script uses the same `config.yml` and evaluates the fine-tuned model across a range of threshold values on the validation dataset, printing the optimal entry and exit thresholds.
+  </Step>
+
+  <Step title="Load and use the fine-tuned model">
+    The saved `.jit` model can be loaded with the standard `init_jit_model` utility:
+
+    ```python
+    from silero_vad.utils_vad import init_jit_model
+    from silero_vad import read_audio, get_speech_timestamps
+
+    model = init_jit_model('path/to/tuned_model.jit')
+
+    wav = read_audio('path/to/audio.wav')
+    speech_timestamps = get_speech_timestamps(
+        wav,
+        model,
+        threshold=0.45,  # use the threshold found by search_thresholds
+        return_seconds=True,
+    )
+    print(speech_timestamps)
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Tips for Better Results
+
+- **More data is better.** Fine-tuning benefits significantly from larger datasets; there is no upper limit on training data size.
+- **Chunk long files.** Audio longer than `max_train_length_sec` is truncated during training. Pre-split long recordings to avoid discarding useful data.
+- **Balance your dataset.** Include a representative mix of speech and non-speech audio from your target domain.
+- **Validate on held-out data.** Use a validation set that is truly unseen — do not re-use training files.

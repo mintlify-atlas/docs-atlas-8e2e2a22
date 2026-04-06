@@ -1,0 +1,178 @@
+---
+title: "Model Overview"
+description: "Architecture, input/output format, and runtime options for the Silero VAD model."
+---
+
+Silero VAD is a lightweight, stateful neural network that assigns a speech probability to each short audio chunk. It runs on both PyTorch JIT and ONNX runtimes and supports 8 kHz and 16 kHz audio.
+
+## Architecture
+
+The model is built around an STFT-based feature extraction front-end followed by a stack of 1-D convolutional layers, a single LSTM cell, and a binary output projection.
+
+### STFT front-end
+
+A learned `Conv1d` layer simulates a short-time Fourier transform:
+
+| Parameter | Value |
+|-----------|-------|
+| `n_fft` | 256 |
+| `stride` | 128 |
+| `padding` | 64 (reflect) |
+| Output channels | 258 (real + imaginary components) |
+
+The magnitude spectrum is computed as `sqrt(real² + imag²)`, producing 129 frequency bins.
+
+### CNN encoder
+
+Four convolutional layers progressively encode the spectral features:
+
+| Layer | In channels | Out channels | Stride | Notes |
+|-------|-------------|--------------|--------|-------|
+| `conv1` | 129 | 128 | 1 | kernel 3, pad 1 |
+| `conv2` | 128 | 64 | 2 | kernel 3, pad 1 — downsamples |
+| `conv3` | 64 | 64 | 2 | kernel 3, pad 1 — downsamples |
+| `conv4` | 64 | 128 | 1 | kernel 3, pad 1 |
+
+All layers use ReLU activations.
+
+### LSTM cell
+
+A single `LSTMCell(128 → 128)` carries hidden state `(h, c)` across consecutive audio chunks. This is what makes the model **stateful** — the hidden state must persist between chunks of the same file and be reset between files.
+
+### Output head
+
+```
+Conv1d(128 → 1, kernel 1) → sigmoid → scalar mean
+```
+
+The final sigmoid + mean reduction produces a single float in `[0.0, 1.0]` representing the probability that the current chunk contains speech.
+
+---
+
+## Input Format
+
+The model expects a 1-D float tensor containing a fixed-size audio window.
+
+| Sample rate | Window size | Duration |
+|-------------|-------------|----------|
+| 16 000 Hz | 512 samples | 32 ms |
+| 8 000 Hz | 256 samples | 32 ms |
+
+<Info>
+Passing the wrong number of samples raises a `ValueError`. The `OnnxWrapper` enforces this automatically; when using the JIT model directly you are responsible for correct chunking.
+</Info>
+
+Batched input `(batch_size, window_size)` is also accepted. The context window (64 samples at 16 kHz, 32 samples at 8 kHz) is prepended internally by the wrappers.
+
+---
+
+## Output Format
+
+Each forward call returns a single speech probability:
+
+```
+0.0  ──────────────────────────  1.0
+ silence                        speech
+```
+
+The default classification threshold is **0.5** — probabilities at or above this value are treated as speech.
+
+---
+
+## Direct Model Inference
+
+<CodeGroup>
+
+```python PyTorch JIT
+import torch
+from silero_vad import load_silero_vad, read_audio
+
+# Load model (JIT by default)
+model = load_silero_vad()
+
+wav = read_audio('audio.wav', sampling_rate=16000)
+
+# Reset hidden state before processing a new file
+model.reset_states()
+
+window = 512  # samples per chunk at 16 kHz
+for i in range(0, len(wav), window):
+    chunk = wav[i : i + window]
+    if len(chunk) < window:
+        chunk = torch.nn.functional.pad(chunk, (0, window - len(chunk)))
+    prob = model(chunk, 16000).item()
+    print(f"chunk {i // window}: speech probability = {prob:.3f}")
+```
+
+```python ONNX
+import torch
+from silero_vad import load_silero_vad, read_audio
+
+# Load ONNX model (opset 16 by default)
+model = load_silero_vad(onnx=True)
+
+wav = read_audio('audio.wav', sampling_rate=16000)
+
+model.reset_states()
+
+window = 512
+for i in range(0, len(wav), window):
+    chunk = wav[i : i + window]
+    if len(chunk) < window:
+        chunk = torch.nn.functional.pad(chunk, (0, window - len(chunk)))
+    prob = model(chunk, 16000).item()
+    print(f"chunk {i // window}: speech probability = {prob:.3f}")
+```
+
+</CodeGroup>
+
+---
+
+## Runtimes
+
+Silero VAD ships with two runtime variants bundled inside the `silero_vad` package.
+
+<Note>
+Both runtimes expose the same Python interface (`model(chunk, sr)` and `model.reset_states()`). You can swap between them without changing the rest of your code.
+</Note>
+
+### PyTorch JIT (`silero_vad.jit`)
+
+- Loaded via `torch.jit.load`
+- ~2 MB on disk
+- Default runtime when calling `load_silero_vad()`
+- Requires `torch >= 1.12.0`
+
+### ONNX (`silero_vad.onnx` / `silero_vad_16k_op15.onnx`)
+
+- Loaded via `onnxruntime.InferenceSession`
+- Available in opset 15 and opset 16
+- Runs anywhere ONNX Runtime is supported (CPU, GPU, mobile, browser, C++, Rust, Go, …)
+- Requires `onnxruntime >= 1.16.1`
+- Can be 4–5× faster than JIT on CPU under certain conditions
+
+Load the ONNX model:
+
+```python
+from silero_vad import load_silero_vad
+
+model_op16 = load_silero_vad(onnx=True)                    # opset 16 (default)
+model_op15 = load_silero_vad(onnx=True, opset_version=15)  # opset 15
+```
+
+---
+
+## State Management
+
+<Note>
+The LSTM hidden state must be reset between audio files. Forgetting to call `reset_states()` will cause speech probabilities from a previous file to "leak" into the next one, producing incorrect results.
+</Note>
+
+```python
+for audio_file in file_list:
+    wav = read_audio(audio_file)
+    model.reset_states()          # <-- required before each new file
+    process(wav, model)
+```
+
+The `get_speech_timestamps` helper calls `model.reset_states()` automatically at the start of each invocation.

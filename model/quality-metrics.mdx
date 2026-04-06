@@ -1,0 +1,109 @@
+---
+title: "Quality Metrics"
+description: "Detection accuracy, language coverage, robustness, and threshold tuning for Silero VAD."
+---
+
+Silero VAD achieves excellent results on speech detection benchmarks and compares favourably against other available solutions. It was trained on a large, diverse corpus and generalises well across domains, noise conditions, and languages.
+
+## Detection Accuracy
+
+Silero VAD has excellent results on speech detection tasks compared with other available solutions. The model is trained for binary classification (speech / non-speech) at chunk granularity and is optimised for both precision and recall.
+
+<Note>
+Official benchmark numbers are published in the [Quality Metrics wiki](https://github.com/snakers4/silero-vad/wiki/Quality-Metrics). The comparisons cover multiple public datasets and real-world telephony recordings.
+</Note>
+
+---
+
+## Language Coverage
+
+Silero VAD was trained on corpora spanning **6000+ languages**. Because the model detects speech as an acoustic phenomenon rather than performing language-specific recognition, it generalises to languages not explicitly seen during training.
+
+---
+
+## Robustness
+
+The model performs well across a variety of real-world conditions:
+
+| Condition | Notes |
+|-----------|-------|
+| Background noise | Trained on diverse noise levels; robust to common office, street, and telephony noise |
+| Audio quality | Handles compressed audio (telephony codecs, MP3) and high-quality recordings |
+| Microphone variation | Robust to different microphone types and recording distances |
+| Domain variation | Generalises across call-centre, broadcast, conversational, and IoT audio |
+
+---
+
+## Sample Rate Comparison
+
+| Sample rate | Window size | Frequency resolution | Recommended use |
+|-------------|-------------|----------------------|-----------------|
+| 16 000 Hz | 512 samples (32 ms) | Full | Default — best quality |
+| 8 000 Hz | 256 samples (32 ms) | Reduced | Telephony / low-bandwidth pipelines |
+
+The 16 kHz path is preferred for best accuracy. The 8 kHz path is provided for telephony use cases where downsampling to 16 kHz is not practical.
+
+<Note>
+The `silero_vad_16k_op15.onnx` ONNX variant raises a warning if instantiated with an 8 kHz sample rate, as it was exported for 16 kHz only. Use the default `silero_vad.onnx` (opset 16) when you need dual sample-rate support.
+</Note>
+
+---
+
+## Detection Parameters
+
+The following parameters in `get_speech_timestamps` directly affect detection quality. Tuning them for your specific domain and noise conditions can significantly improve results.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `threshold` | `0.5` | Speech probability above which a frame is classified as speech |
+| `neg_threshold` | `threshold - 0.15` | Probability below which the model exits speech state (hysteresis) |
+| `min_speech_duration_ms` | `250` | Discard speech segments shorter than this duration |
+| `min_silence_duration_ms` | `100` | Minimum silence gap before a speech segment is closed |
+| `speech_pad_ms` | `30` | Padding added to both ends of each detected speech segment |
+| `max_speech_duration_s` | `inf` | Maximum allowed length of a single speech segment before a forced split |
+
+### Threshold Hysteresis
+
+The model uses a two-threshold hysteresis scheme to reduce jitter at speech boundaries:
+
+- **Enter speech**: `speech_prob >= threshold`
+- **Exit speech**: `speech_prob < neg_threshold` (defaults to `threshold - 0.15`)
+
+This prevents rapid toggling between speech and non-speech on frames near the decision boundary.
+
+<Note>
+The default `threshold=0.5` is a good starting point for most datasets, but it is worth tuning per domain. Noisy environments or heavily accented speech may benefit from a lower threshold (e.g. `0.3–0.4`). Clean studio recordings can often use a higher threshold (e.g. `0.6–0.7`) to suppress low-level background noise.
+</Note>
+
+### Threshold Tuning Example
+
+```python
+from silero_vad import load_silero_vad, read_audio, get_speech_timestamps
+
+model = load_silero_vad()
+wav = read_audio('noisy_call.wav', sampling_rate=8000)
+
+# Lower threshold for a noisy telephony recording
+timestamps = get_speech_timestamps(
+    wav,
+    model,
+    threshold=0.35,          # enter speech at lower confidence
+    neg_threshold=0.20,      # explicit exit threshold (otherwise threshold - 0.15)
+    min_speech_duration_ms=200,
+    min_silence_duration_ms=150,
+    sampling_rate=8000,
+    return_seconds=True,
+)
+```
+
+---
+
+## Interpreting Speech Probability
+
+```
+0.0 ──────────┬────────────────┬──────────── 1.0
+             0.35             0.50
+          (noisy floor)   (default threshold)
+```
+
+A probability of `0.0` indicates definite non-speech; `1.0` indicates definite speech. Values in between represent uncertainty — the threshold and `neg_threshold` control where the model draws the boundary.

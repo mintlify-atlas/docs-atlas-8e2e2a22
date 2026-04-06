@@ -1,0 +1,100 @@
+---
+title: "Language Integrations"
+description: "Community-maintained examples for running Silero VAD from C++, Rust, Go, Java, C#, Haskell, and the browser."
+---
+
+## Overview
+
+Silero VAD's ONNX model can be loaded by any runtime that supports [ONNX Runtime](https://onnxruntime.ai/getting-started). The repository ships community-contributed examples for several languages, all located in the `examples/` directory.
+
+<Info>
+These examples are **community-maintained**. They use the ONNX model directly via the ONNX Runtime SDK, and each one implements its own audio I/O and post-processing. APIs and dependencies may differ from the Python package.
+</Info>
+
+---
+
+## Examples by Language
+
+<CardGroup cols={2}>
+  <Card title="C++" icon="code">
+    Uses the ONNX Runtime C++ API to load `silero_vad.onnx` and run inference on `.wav` files.
+
+    Located at: `examples/cpp/`
+
+    Also see the ExecuTorch-based C++ example in the upstream PyTorch ExecuTorch repository (`examples/models/silero_vad`).
+  </Card>
+
+  <Card title="Rust" icon="code">
+    Two Rust examples are available:
+
+    - **`examples/rust-example/`** — minimal ONNX Runtime Rust bindings usage
+    - **`examples/rust-wav-processing-with-wavekat-vad/`** — WAV file processing using the `wavekat-vad` crate
+  </Card>
+
+  <Card title="Go" icon="code">
+    Uses the `onnxruntime-go` binding to run inference.
+
+    Located at: `examples/go/`
+
+    Includes a `cmd/` sub-package with a runnable example binary.
+  </Card>
+
+  <Card title="Java" icon="code">
+    Two Java examples are available:
+
+    - **`examples/java-example/`** — basic ONNX Runtime Java API usage
+    - **`examples/java-wav-file-example/`** — reads and processes `.wav` files
+  </Card>
+
+  <Card title="C#" icon="code">
+    A .NET project using `Microsoft.ML.OnnxRuntime`.
+
+    Located at: `examples/csharp/`
+
+    Key classes: `SileroVadOnnxModel`, `SileroVadDetector`, `SileroSpeechSegment`.
+  </Card>
+
+  <Card title="Haskell" icon="code">
+    Uses the `onnxruntime` Haskell binding.
+
+    Located at: `examples/haskell/`
+
+    Built with Stack; see `stack.yaml` for the resolver and dependency versions.
+  </Card>
+
+  <Card title="Browser (JS)" icon="globe">
+    Voice activity detection in the browser using **ONNX Runtime Web**.
+
+    Maintained externally by the community as [`ricky0123/vad`](https://github.com/ricky0123/vad). Not bundled in the repository examples directory but listed in the main README.
+  </Card>
+
+  <Card title="PyAudio Streaming" icon="microphone">
+    Python example showing real-time microphone input with `pyaudio` and Silero VAD.
+
+    Located at: `examples/pyaudio-streaming/`
+
+    Includes a Jupyter notebook with live probability visualization. Requires local execution (not compatible with Google Colab).
+  </Card>
+</CardGroup>
+
+---
+
+## Implementing Your Own Integration
+
+If you are integrating with a runtime not listed above, you need to handle three things:
+
+1. **Audio I/O** — load and resample audio to 8000 Hz or 16000 Hz as raw float32 PCM.
+2. **State management** — the ONNX model takes a GRU state tensor as input and returns an updated state; you must pass the state from one call to the next.
+3. **Post-processing** — threshold comparison, segment boundary detection, and padding logic must be reimplemented in your language.
+
+The ONNX model input/output schema:
+
+| Name | Shape | Dtype | Description |
+|------|-------|-------|-------------|
+| `input` | `(batch, samples)` | `float32` | Audio chunk (512 samples @ 16 kHz, 256 @ 8 kHz) |
+| `state` | `(2, batch, 128)` | `float32` | LSTM hidden state `(h, c)` stacked — zero-initialize on first call |
+| `sr` | scalar | `int64` | Sampling rate (`8000` or `16000`) |
+| **output** | `(batch, 1)` | `float32` | Speech probability for this chunk |
+| **stateN** | `(2, batch, 128)` | `float32` | Updated LSTM state (feed back into next call) |
+
+Refer to the existing community examples for concrete patterns — the C++ and Rust examples are the most complete references for state management.
